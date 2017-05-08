@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="dist">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/dist/python-java-testdaemon.jar!/" />
+      <root url="jar://$PROJECT_DIR$/dist/Python-3.4-Java-testdaemon.b4.jar!/" />
+      <root url="jar://$PROJECT_DIR$/dist/Python-3.4-Java-support.b4.jar!/" />
+      <root url="jar://$PROJECT_DIR$/dist/python-java-support.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
