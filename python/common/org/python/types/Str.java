@@ -66,12 +66,75 @@ public class Str extends org.python.types.Object {
     //     throw new org.python.exceptions.NotImplementedError("__init__() has not been implemented.");
     // }
 
+    private static boolean isCharPrintable(char c) {
+        // ASCII non-printable
+        if ((int) c <= 0x1f || (int) c >= 0x7f && (int) c <= 0xa0 || (int) c == 0xad) {
+            return false;
+        }
+        if ((int) c == 0x2029) {
+            return false;
+        }
+        if (Character.isISOControl(c)) {
+            return false;
+        }
+        return true;
+    }
+
     @org.python.Method(
             __doc__ = ""
     )
     public org.python.Object __repr__() {
-        return new org.python.types.Str("'" + this.value + "'");
+    /*
+    * Reference: https://www.python.org/dev/peps/pep-3138/#id7
+    * TODO: Need to treat the leading surrogate pair characters
+    */
+        StringBuilder sb = new StringBuilder();
+        boolean hasDoubleQuote = false;
+        boolean hasSingleQuote = false;
+
+        for (char c : this.value.toCharArray()) {
+            if (c == '\'') {
+                hasSingleQuote = true;
+            } else if (c == '"') {
+                hasDoubleQuote = true;
+            }
+
+            if (c == '\n') {
+                sb.append("\\n");
+            } else if (c == '\t') {
+                sb.append("\\t");
+            } else if (c == '\r') {
+                sb.append("\\r");
+            } else if (c == '\\') {
+                sb.append("\\\\");
+            // ASCII Non-Printable
+            } else if (c <= 0x1f || c >= 0x7f && c <= 0xa0 || c == 0xad) {
+                sb.append(String.format("\\x%02x", (int) c));
+            } else if (!this.isCharPrintable(c)) {
+                sb.append(String.format("\\u%04x", (int) c));
+            } else {
+                sb.append((char) c);
+            }
+        }
+
+        // Decide if we wanna wrap the result with single or double quotes
+        String quote;
+        String repr = sb.toString();
+
+        if (hasSingleQuote) {
+            if (hasDoubleQuote) {
+                quote = "'";
+                repr = repr.replaceAll("'", "\\\\'");
+            } else {
+                quote = "\"";
+            }
+        } else {
+            quote = "'";
+        }
+
+        return new org.python.types.Str(quote + repr + quote);
     }
+
 
     @org.python.Method(
             __doc__ = ""
@@ -837,7 +900,27 @@ public class Str extends org.python.types.Object {
                     "such as \"def\" and \"class\".\n"
     )
     public org.python.Object isidentifier() {
-        throw new org.python.exceptions.NotImplementedError("isidentifier() has not been implemented.");
+        if (this.value.isEmpty()) {
+            return new org.python.types.Bool(false);
+        }
+        boolean firstCheck = true;
+        for (char ch : this.value.toCharArray()) {
+            // Beginning with underscores seems to blow up on isUnicodeIdentifierStart
+            if (ch == '_') {
+                continue;
+            }
+            if (firstCheck) {
+                if (!(Character.isUnicodeIdentifierStart(ch))) {
+                    return new org.python.types.Bool(false);
+                }
+                firstCheck = false;
+            } else {
+                if (!(Character.isUnicodeIdentifierPart(ch))) {
+                    return new org.python.types.Bool(false);
+                }
+            }
+        }
+        return new org.python.types.Bool(true);
     }
 
     @org.python.Method(
@@ -860,7 +943,15 @@ public class Str extends org.python.types.Object {
                     "False otherwise.\n"
     )
     public org.python.Object isnumeric() {
-        throw new org.python.exceptions.NotImplementedError("isnumeric() has not been implemented.");
+        if (this.value.isEmpty()) {
+            return new org.python.types.Bool(false);
+        }
+        for (char ch : this.value.toCharArray()) {
+            if (!(Character.isDigit(ch))) {
+                return new org.python.types.Bool(false);
+            }
+        }
+        return new org.python.types.Bool(true);
     }
 
     @org.python.Method(
@@ -870,7 +961,12 @@ public class Str extends org.python.types.Object {
                     "printable in repr() or S is empty, False otherwise.\n"
     )
     public org.python.Object isprintable() {
-        throw new org.python.exceptions.NotImplementedError("isprintable() has not been implemented.");
+        for (char ch : this.value.toCharArray()) {
+            if (!this.isCharPrintable(ch)) {
+                return new org.python.types.Bool(false);
+            }
+        }
+        return new org.python.types.Bool(true);
     }
 
     @org.python.Method(
@@ -1352,15 +1448,82 @@ public class Str extends org.python.types.Object {
         return result_list;
     }
 
+    private static boolean isLineBreak(char character) {
+        // List of line boundaries from https://docs.python.org/3.4/library/stdtypes.html#str.splitlines
+        switch (character) {
+            case '\n':
+            case '\r':
+            case '\u000B':
+            case '\u000C':
+            case '\u001C':
+            case '\u001D':
+            case '\u001E':
+            case '\u0085':
+            case '\u2028':
+            case '\u2029':
+                return true;
+            default:
+                return false;
+        }
+    }
+
     @org.python.Method(
             __doc__ = "S.splitlines([keepends]) -> list of strings\n" +
                     "\n" +
                     "Return a list of the lines in S, breaking at line boundaries.\n" +
                     "Line breaks are not included in the resulting list unless keepends\n" +
-                    "is given and true.\n"
+                    "is given and true.\n",
+            default_args = {"keepends"}
     )
-    public org.python.Object splitlines() {
-        throw new org.python.exceptions.NotImplementedError("splitlines() has not been implemented.");
+    public org.python.Object splitlines(org.python.Object keepends) {
+        if (keepends == null) {
+            keepends = new org.python.types.Bool(false);
+        }
+
+        org.python.types.List result = new org.python.types.List();
+        char current;
+
+        int start = 0;
+        int end;
+        int start_extra;
+        boolean skip = false;
+
+        for (int i = 0; i < this.value.length(); i++) {
+            current = this.value.charAt(i);
+            char next = current;
+
+            if (i < this.value.length() - 1) {
+                next = this.value.charAt(i + 1);
+            }
+
+            if (this.isLineBreak(current)) {
+                end = i;
+                if (current == '\r' && next == '\n') {
+                    skip = true;
+                    start_extra = 1;
+                    if (keepends.toBoolean()) {
+                        end++;
+                    }
+                } else {
+                    start_extra = 0;
+                }
+                if (keepends.toBoolean()) {
+                    end++;
+                }
+                result.append(this.__getitem__(new org.python.types.Slice(new org.python.types.Int(start), new org.python.types.Int(end))));
+                start = i + 1 + start_extra;
+                if (skip) {
+                    skip = false;
+                    i++;
+                }
+            }
+        }
+        org.python.types.Str last = (org.python.types.Str) this.__getitem__(new org.python.types.Slice(new org.python.types.Int(start), org.python.types.NoneType.NONE));
+        if (last.value.length() > 0) {
+            result.append(last);
+        }
+        return result;
+
     }
 
     @org.python.Method(

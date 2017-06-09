@@ -1,3 +1,6 @@
+
+from unittest import expectedFailure
+
 from .. utils import TranspileTestCase, UnaryOperationTestCase, BinaryOperationTestCase, InplaceOperationTestCase
 
 
@@ -681,6 +684,56 @@ class StrTests(TranspileTestCase):
                 print(err)
             """)
 
+    def test_isnumeric(self):
+        self.assertCodeExecution("""
+        for str_ in ['123', '123.4', 'abc', '', ' ', 'ABCD', 'ABCD ', '12323445',
+        '123.', '.12', '1A', 'A1', '!@#', 'A1@#']:
+            print(str_.isnumeric())
+            """)
+
+    def test_isidentifier(self):
+        self.assertCodeExecution("""
+        for str_ in ['_sjkd', 'abc', 'ABC', 'b13s', 'foo_bar', 'eÃⱣỉ', 'ÃⱣỉ', "22222", " ", "", "/",
+        "4a2a", "*", "ab cd", "!z", "&a", "@", "%"]:
+            print(str_, str_.isidentifier())
+            """)
+
+    def test_isprintable(self):
+        self.assertCodeExecution("""
+        for str_ in [chr(i) for i in range(33)] + ['AAA', 'bcd', '1234', 'eÃⱣỉ', 'ÃⱣỉ', '', '\x07' + 'foo', '\u2029']:
+            print(str_.isprintable())
+            """)
+
+    @expectedFailure
+    def test_isprintable_missing_cases(self):
+        self.assertCodeExecution(r"""
+        tests = ['\u2028']:
+        for test in tests:
+            print(test.isprintable())
+        """)
+
+    def test_repr(self):
+        self.assertCodeExecution(r"""
+        tests = ["\r\n", "áéíóú", "\u000B", "\u2029", "\\", "'", "\"", "\"'"]
+        for test in tests:
+            print(repr(test))
+        """)
+
+    def test_splitlines(self):
+        self.assertCodeExecution(r"""
+        str_ = "aaa\nbbb\rccc\r\nddd\n\reee"
+
+        print(str_.splitlines())
+        print(str_.splitlines(True))
+        print("Don't Panic\n".splitlines())
+        print('\n'.splitlines())
+        print(''.splitlines())
+
+        s1 = '\r\n\r\n\v\f\x0b\x0c\u2029\x1c\x1d\x1e\x85'
+        print(s1.splitlines())
+        print(s1.splitlines(True))
+        """)
+
 
 class UnaryStrOperationTests(UnaryOperationTestCase, TranspileTestCase):
     data_type = 'str'
@@ -690,44 +743,6 @@ class BinaryStrOperationTests(BinaryOperationTestCase, TranspileTestCase):
     data_type = 'str'
 
     not_implemented = [
-        'test_add_class',
-        'test_add_frozenset',
-
-        'test_and_class',
-        'test_and_frozenset',
-
-        'test_direct_eq_bytes',
-        'test_direct_ge_bytes',
-        'test_direct_gt_bytes',
-        'test_direct_le_bytes',
-        'test_direct_lt_bytes',
-        'test_direct_ne_bytes',
-
-        'test_direct_eq_frozenset',
-        'test_direct_ge_frozenset',
-        'test_direct_gt_frozenset',
-        'test_direct_le_frozenset',
-        'test_direct_lt_frozenset',
-        'test_direct_ne_frozenset',
-
-        'test_eq_class',
-        'test_eq_frozenset',
-
-        'test_ge_class',
-        'test_ge_frozenset',
-
-        'test_gt_class',
-        'test_gt_frozenset',
-
-        'test_le_class',
-        'test_le_frozenset',
-
-        'test_lshift_class',
-        'test_lshift_frozenset',
-
-        'test_lt_class',
-        'test_lt_frozenset',
-
         'test_modulo_bool',
         'test_modulo_bytes',
         'test_modulo_bytearray',
@@ -746,34 +761,8 @@ class BinaryStrOperationTests(BinaryOperationTestCase, TranspileTestCase):
         'test_modulo_str',
         'test_modulo_tuple',
 
-        'test_multiply_class',
-        'test_multiply_frozenset',
-
-        'test_ne_class',
-        'test_ne_frozenset',
-
-        'test_or_class',
-        'test_or_frozenset',
-
-        'test_power_class',
-        'test_power_frozenset',
-
-        'test_rshift_class',
-        'test_rshift_frozenset',
-
         'test_subscr_bool',
-        'test_subscr_class',
-        'test_subscr_frozenset',
         'test_subscr_slice',
-
-        'test_subtract_class',
-        'test_subtract_frozenset',
-
-        'test_true_divide_class',
-        'test_true_divide_frozenset',
-
-        'test_xor_class',
-        'test_xor_frozenset',
     ]
 
 
@@ -781,15 +770,6 @@ class InplaceStrOperationTests(InplaceOperationTestCase, TranspileTestCase):
     data_type = 'str'
 
     not_implemented = [
-        'test_add_class',
-        'test_add_frozenset',
-
-        'test_and_class',
-        'test_and_frozenset',
-
-        'test_lshift_class',
-        'test_lshift_frozenset',
-
         'test_modulo_bool',
         'test_modulo_bytes',
         'test_modulo_bytearray',
@@ -807,25 +787,4 @@ class InplaceStrOperationTests(InplaceOperationTestCase, TranspileTestCase):
         'test_modulo_set',
         'test_modulo_str',
         'test_modulo_tuple',
-
-        'test_multiply_class',
-        'test_multiply_frozenset',
-
-        'test_or_class',
-        'test_or_frozenset',
-
-        'test_power_class',
-        'test_power_frozenset',
-
-        'test_rshift_class',
-        'test_rshift_frozenset',
-
-        'test_subtract_class',
-        'test_subtract_frozenset',
-
-        'test_true_divide_class',
-        'test_true_divide_frozenset',
-
-        'test_xor_class',
-        'test_xor_frozenset',
     ]

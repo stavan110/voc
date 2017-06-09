@@ -39,14 +39,14 @@ def is_call(node, name):
 
 
 def node_visitor(fn):
-    def dec(self, node):
+    def dec(self, node, *args, **kwargs):
         try:
             if node.lineno != self._current_line:
                 self._current_line = self.context.next_opcode_starts_line = node.lineno
         except AttributeError:
             pass
         self.context.next_resolve_list.append((node, OpcodePosition.START))
-        fn(self, node)
+        fn(self, node, *args, **kwargs)
         self.context.next_resolve_list.append((node, OpcodePosition.END))
         self.context.next_resolve_list.append((node, OpcodePosition.NEXT))
     return dec
@@ -313,6 +313,9 @@ class Visitor(ast.NodeVisitor):
                 self.context.add_opcodes(
                     python.Object.del_item()
                 )
+            elif isinstance(target, ast.Name):
+                # delete is performed by visit(target) with context Del
+                pass
             else:
                 raise NotImplementedError('No handler for Delete of type %s' % target)
 
@@ -337,8 +340,16 @@ class Visitor(ast.NodeVisitor):
     @node_visitor
     def visit_AugAssign(self, node):
         # expr target, operator op, expr value):
+
+        # Evaluate the target
+        if isinstance(node.target, ast.Subscript):
+            self.visit_Subscript(node.target, ctx=ast.Load())
+        elif isinstance(node.target, ast.Attribute):
+            self.visit_Attribute(node.target, ctx=ast.Load())
+        else:
+            self.context.load_name(node.target.id)
+
         # Evaluate the value
-        self.context.load_name(node.target.id)
         self.visit(node.value)
         self.context.add_opcodes(
             JavaOpcodes.INVOKEINTERFACE(
@@ -1733,17 +1744,9 @@ class Visitor(ast.NodeVisitor):
 
     @node_visitor
     def visit_Compare(self, node):
-        self.visit(node.left)
-        const_comparison = isinstance(node.left, ast.Num)
 
-        if len(node.comparators) == 1:
-            self.visit(node.comparators[0])
-            const_comparison |= isinstance(node.comparators[0], ast.Num)
-        else:
-            raise NotImplementedError("Don't know how to resolve multiple comparators")
-
-        if len(node.ops) == 1:
-            if isinstance(node.ops[0], ast.Is) and not const_comparison:
+        def compare_to(arg):
+            if isinstance(arg, ast.Is) and not const_comparison:
                 self.context.add_opcodes(
                     IF([], JavaOpcodes.IF_ACMPNE),
                 )
@@ -1764,7 +1767,7 @@ class Visitor(ast.NodeVisitor):
                     END_IF(),
                 )
 
-            elif isinstance(node.ops[0], ast.IsNot) and not const_comparison:
+            elif isinstance(arg, ast.IsNot) and not const_comparison:
                 self.context.add_opcodes(
                     IF([], JavaOpcodes.IF_ACMPEQ),
                 )
@@ -1786,7 +1789,7 @@ class Visitor(ast.NodeVisitor):
                 )
 
             else:
-                if isinstance(node.ops[0], (ast.In, ast.NotIn)):
+                if isinstance(arg, (ast.In, ast.NotIn)):
                     self.context.add_opcodes(
                         JavaOpcodes.SWAP()
                     )
@@ -1802,7 +1805,7 @@ class Visitor(ast.NodeVisitor):
                         ast.IsNot: '__ne__',
                         ast.NotEq: '__ne__',
                         ast.NotIn: '__not_contains__',
-                }[type(node.ops[0])]
+                }[type(arg)]
                 oper_symbol = {
                         ast.Eq: '==',
                         ast.Gt: '>',
@@ -1814,7 +1817,7 @@ class Visitor(ast.NodeVisitor):
                         ast.IsNot: 'is not',
                         ast.NotEq: '!=',
                         ast.NotIn: 'not in',
-                }[type(node.ops[0])]
+                }[type(arg)]
                 reflect_oper = {
                         ast.Eq: '__eq__',
                         ast.Gt: '__lt__',
@@ -1826,7 +1829,7 @@ class Visitor(ast.NodeVisitor):
                         ast.IsNot: '__ne__',
                         ast.NotEq: '__ne__',
                         ast.NotIn: '__not_contains__',
-                }[type(node.ops[0])]
+                }[type(arg)]
 
                 self.context.add_opcodes(
                     JavaOpcodes.LDC_W(oper_symbol),
@@ -1845,8 +1848,42 @@ class Visitor(ast.NodeVisitor):
                         returns='Lorg/python/Object;',
                     ),
                 )
-        else:
-            raise NotImplementedError("Don't know how to resolve multiple operators")
+
+        self.visit(node.left)
+        left = node.left
+
+        for i, (operation, right) in enumerate(zip(node.ops, node.comparators)):
+            self.visit(right)
+            const_comparison = isinstance(left, ast.Num) | isinstance(right, ast.Num)
+            if i < len(node.ops) - 1:
+                self.context.add_opcodes(
+                        JavaOpcodes.DUP_X1()
+                        )
+                compare_to(operation)
+                self.context.add_opcodes(
+                    JavaOpcodes.DUP()
+                )
+                self.context.add_opcodes(
+                    IF([python.Object.as_boolean()], JavaOpcodes.IFNE)
+                )
+                self.context.add_opcodes(
+                        JavaOpcodes.SWAP(),
+                        JavaOpcodes.POP()
+                )
+                self.context.add_opcodes(
+                    ELSE()
+                )
+                self.context.add_opcodes(
+                        JavaOpcodes.POP()
+                )
+            else:
+                compare_to(operation)
+            left = right
+
+        for _ in range(len(node.ops) - 1):
+            self.context.add_opcodes(
+                END_IF()
+            )
 
     @node_visitor
     def visit_Call(self, node):
@@ -2083,34 +2120,36 @@ class Visitor(ast.NodeVisitor):
         raise NotImplementedError('No handler for Ellipsis')
 
     @node_visitor
-    def visit_Attribute(self, node):
+    def visit_Attribute(self, node, ctx=None):
+        ctx = ctx or node.ctx
         self.visit(node.value)
 
-        if type(node.ctx) == ast.Load:
+        if type(ctx) == ast.Load:
             self.context.add_opcodes(
                 python.Object.get_attribute(node.attr),
             )
-        elif type(node.ctx) == ast.Store:
+        elif type(ctx) == ast.Store:
             self.context.add_opcodes(
                 JavaOpcodes.SWAP(),
                 python.Object.set_attr(node.attr),
             )
-        elif type(node.ctx) == ast.Del:
+        elif type(ctx) == ast.Del:
             self.context.add_opcodes(
                 JavaOpcodes.LDC_W(node.attr),
             )
         else:
-            raise NotImplementedError("Unknown context %s" % node.ctx)
+            raise NotImplementedError("Unknown context %s" % ctx)
 
     @node_visitor
-    def visit_Subscript(self, node):
-        if type(node.ctx) == ast.Load:
+    def visit_Subscript(self, node, ctx=None):
+        ctx = ctx or node.ctx
+        if type(ctx) == ast.Load:
             self.visit(node.value)
             self.visit(node.slice)
             self.context.add_opcodes(
                 python.Object.get_item()
             )
-        elif type(node.ctx) == ast.Store:
+        elif type(ctx) == ast.Store:
             self.context.add_opcodes(
                 ASTORE_name('#value'),
             )
@@ -2121,7 +2160,7 @@ class Visitor(ast.NodeVisitor):
                 python.Object.set_item(),
                 free_name('#value'),
             )
-        elif type(node.ctx) == ast.Del:
+        elif type(ctx) == ast.Del:
             self.visit(node.value)
             self.visit(node.slice)
         else:
@@ -2141,6 +2180,8 @@ class Visitor(ast.NodeVisitor):
                 )
         elif type(node.ctx) == ast.Store:
             self.context.store_name(node.id)
+        elif type(node.ctx) == ast.Del:
+            self.context.delete_name(node.id)
         else:
             raise NotImplementedError("Unknown context %s" % node.ctx)
 
